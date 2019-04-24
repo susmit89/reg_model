@@ -1,4 +1,15 @@
 ## 4k to 8K
+Install prerequisites
+python3 -m pip install easydict, tensorflow, tensorlayer
+
+- For Testing.
+Create checkpoint dir
+Unzip models in checkpoint dir
+Unzip test images in data2017
+Give the path of the LR image in main.py line
+```bash
+python3 main.py --mode=evaluate
+```
 
 
 ### Prepare Data and Pre-trained VGG
@@ -12,15 +23,8 @@ Download [vgg19.npy](https://mega.nz/#!xZ8glS6J!MAnE91ND_WyfZ_8mvkuSa2YcA7q-1ehf
 ```python
 config.TRAIN.img_path = "your_image_folder/"
 ```
-
-- Start training.
-
-```bash
-python main.py
-```
-
-- Start evaluation. ([pretrained model](https://github.com/tensorlayer/srgan/releases/tag/1.2.0) for DIV2K)
+- For Training.
 
 ```bash
-python main.py --mode=evaluate
+python3 main.py
 ```
