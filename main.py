@@ -25,7 +25,7 @@ n_epoch = config.TRAIN.n_epoch
 lr_decay = config.TRAIN.lr_decay
 decay_every = config.TRAIN.decay_every
 
-ni = int(batch_size)
+ni = int(np.sqrt(batch_size))
 
 
 def train():
@@ -89,8 +89,9 @@ def train():
     g_gan_loss = 1e-3 * tl.cost.sigmoid_cross_entropy(logits_fake, tf.ones_like(logits_fake), name='g')
     mse_loss = tl.cost.mean_squared_error(net_g.outputs, t_target_image, is_mean=True)
     vgg_loss = 2e-6 * tl.cost.mean_squared_error(vgg_predict_emb.outputs, vgg_target_emb.outputs, is_mean=True)
-
-    g_loss = mse_loss + 1.2*vgg_loss + g_gan_loss
+    reg_loss0 = tl.cost.maxnorm_regularizer(1.0)(net_g.all_params[167])  + tl.cost.maxnorm_regularizer(1.0)(net_g.all_params[168])
+    reg_loss = reg_loss0 + tl.cost.maxnorm_regularizer(1.0)(net_g.all_params[169]) + tl.cost.maxnorm_regularizer(1.0)(net_g.all_params[170])
+    g_loss = mse_loss + 0.87*vgg_loss + 0.986*g_gan_loss + reg_loss
 
     g_vars = tl.layers.get_variables_with_name('SRGAN_g', True, True)
     d_vars = tl.layers.get_variables_with_name('SRGAN_d', True, True)
@@ -124,8 +125,6 @@ def train():
         print("  Loading %s: %s, %s" % (val[0], W.shape, b.shape))
         params.extend([W, b])
     tl.files.assign_params(sess, params, net_vgg)
-    # net_vgg.print_params(False)
-    # net_vgg.print_layers()
 
     ###============================= TRAINING ===============================###
     ## use first `batch_size` of train set to have a quick test during training
@@ -148,22 +147,11 @@ def train():
         epoch_time = time.time()
         total_mse_loss, n_iter = 0, 0
 
-        ## If your machine cannot load all images into memory, you should use
-        ## this one to load batch of images while training.
-        # random.shuffle(train_hr_img_list)
-        # for idx in range(0, len(train_hr_img_list), batch_size):
-        #     step_time = time.time()
-        #     b_imgs_list = train_hr_img_list[idx : idx + batch_size]
-        #     b_imgs = tl.prepro.threading_data(b_imgs_list, fn=get_imgs_fn, path=config.TRAIN.hr_img_path)
-        #     b_imgs_384 = tl.prepro.threading_data(b_imgs, fn=crop_sub_imgs_fn, is_random=True)
-        #     b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
-
         ## If your machine have enough memory, please pre-load the whole train set.
-        for idx in range(0, len(train_hr_imgs)//batch_size):
+        for idx in range(0, len(train_hr_imgs), batch_size):
             step_time = time.time()
             b_imgs_384 = tl.prepro.threading_data(train_hr_imgs[idx:idx + batch_size], fn=crop_sub_imgs_fn, is_random=True)
             b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
-            idx+=batch_size
             ## update G
             errM, _ = sess.run([mse_loss, g_optim_init], {t_image: b_imgs_96, t_target_image: b_imgs_384})
             print("Epoch [%2d/%2d] %4d time: %4.4fs, mse: %.8f " % (epoch, n_epoch_init, n_iter, time.time() - step_time, errM))
@@ -198,28 +186,17 @@ def train():
         epoch_time = time.time()
         total_d_loss, total_g_loss, n_iter = 0, 0, 0
 
-        ## If your machine cannot load all images into memory, you should use
-        ## this one to load batch of images while training.
-        # random.shuffle(train_hr_img_list)
-        # for idx in range(0, len(train_hr_img_list), batch_size):
-        #     step_time = time.time()
-        #     b_imgs_list = train_hr_img_list[idx : idx + batch_size]
-        #     b_imgs = tl.prepro.threading_data(b_imgs_list, fn=get_imgs_fn, path=config.TRAIN.hr_img_path)
-        #     b_imgs_384 = tl.prepro.threading_data(b_imgs, fn=crop_sub_imgs_fn, is_random=True)
-        #     b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
-
         ## If your machine have enough memory, please pre-load the whole train set.
-        for idx in range(0, len(train_hr_imgs)//batch_size):
+        for idx in range(0, len(train_hr_imgs), batch_size):
             step_time = time.time()
             b_imgs_384 = tl.prepro.threading_data(train_hr_imgs[idx:idx + batch_size], fn=crop_sub_imgs_fn, is_random=True)
             b_imgs_96 = tl.prepro.threading_data(b_imgs_384, fn=downsample_fn)
-            idx+=batch_size
             ## update D
             errD, _ = sess.run([d_loss, d_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
             ## update G
-            errG, errM, errV, errA, _ = sess.run([g_loss, mse_loss, vgg_loss, g_gan_loss, g_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
-            print("Epoch [%2d/%2d] %4d time: %4.4fs, d_loss: %.8f g_loss: %.8f (mse: %.6f vgg: %.6f adv: %.6f)" %
-                  (epoch, n_epoch, n_iter, time.time() - step_time, errD, errG, errM, errV, errA))
+            errG, errM, errR, errV, errA, _ = sess.run([g_loss, mse_loss, reg_loss, vgg_loss, g_gan_loss, g_optim], {t_image: b_imgs_96, t_target_image: b_imgs_384})
+            print("Epoch [%2d/%2d] %4d time: %4.4fs, d_loss: %.8f g_loss: %.8f (mse: %.6f reg: %.6f vgg: %.6f adv: %.6f)" %
+                  (epoch, n_epoch, n_iter, time.time() - step_time, errD, errG, errM, errR,errV, errA))
             total_d_loss += errD
             total_g_loss += errG
             n_iter += 1
@@ -245,57 +222,31 @@ def evaluate():
     save_dir = "samples/{}".format(tl.global_flag['mode'])
     tl.files.exists_or_mkdir(save_dir)
     checkpoint_dir = "checkpoint"
-
-    ###====================== PRE-LOAD DATA ===========================###
-    # train_hr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.hr_img_path, regx='.*.png', printable=False))
-    # train_lr_img_list = sorted(tl.files.load_file_list(path=config.TRAIN.lr_img_path, regx='.*.png', printable=False))
-    valid_hr_img_list = sorted(tl.files.load_file_list(path=config.VALID.hr_img_path, regx='.*.png', printable=False))
-    valid_lr_img_list = sorted(tl.files.load_file_list(path=config.VALID.lr_img_path, regx='.*.png', printable=False))
-
-    ## If your machine have enough memory, please pre-load the whole train set.
-    # train_hr_imgs = tl.vis.read_images(train_hr_img_list, path=config.TRAIN.hr_img_path, n_threads=32)
-    # for im in train_hr_imgs:
-    #     print(im.shape)
-    valid_lr_imgs = tl.vis.read_images(valid_lr_img_list, path=config.VALID.lr_img_path, n_threads=32)
-    # for im in valid_lr_imgs:
-    #     print(im.shape)
-    valid_hr_imgs = tl.vis.read_images(valid_hr_img_list, path=config.VALID.hr_img_path, n_threads=32)
-    # for im in valid_hr_imgs:
-    #     print(im.shape)
-    # exit()
-
     ###========================== DEFINE MODEL ============================###
-    imid = 64  # 0: 企鹅  81: 蝴蝶 53: 鸟  64: 古堡
-    valid_lr_img = valid_lr_imgs[imid]
-    valid_hr_img = valid_hr_imgs[imid]
-    # valid_lr_img = get_imgs_fn('test.png', 'data2017/')  # if you want to test your own image
-    valid_lr_img = (valid_lr_img / 127.5) - 1  # rescale to ［－1, 1]
-    # print(valid_lr_img.min(), valid_lr_img.max())
-
-    size = valid_lr_img.shape
-    # t_image = tf.placeholder('float32', [None, size[0], size[1], size[2]], name='input_image') # the old version of TL need to specify the image size
     t_image = tf.placeholder('float32', [1, None, None, 3], name='input_image')
-
     net_g = SRGAN_g(t_image, is_train=False, reuse=False)
-
-    ###========================== RESTORE G =============================###
-    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))
+    sess = tf.Session(config=tf.ConfigProto(device_count={'GPU':0},allow_soft_placement=True, log_device_placement=False))
     tl.layers.initialize_global_variables(sess)
     tl.files.load_and_assign_npz(sess=sess, name=checkpoint_dir + '/g_srgan.npz', network=net_g)
+    for i in [5,29,35,62,78,83,150,192,258,289,310,]:
+        valid_lr_img = get_imgs_fn(str(i)+'.png', '../..//model3/srgan/data2017/LR/')
+        valid_lr_img = (valid_lr_img / 127.5) - 1  # rescale to ［－1, 1]
+        size = valid_lr_img.shape
 
     ###======================= EVALUATION =============================###
-    start_time = time.time()
-    out = sess.run(net_g.outputs, {t_image: [valid_lr_img]})
-    print("took: %4.4fs" % (time.time() - start_time))
+        start_time = time.time()
+        out = sess.run(net_g.outputs, {t_image: [valid_lr_img]})
+        print("took: %4.4fs" % (time.time() - start_time))
 
-    print("LR size: %s /  generated HR size: %s" % (size, out.shape))  # LR size: (339, 510, 3) /  gen HR size: (1, 1356, 2040, 3)
-    print("[*] save images")
-    tl.vis.save_image(out[0], save_dir + '/valid_gen.png')
-    tl.vis.save_image(valid_lr_img, save_dir + '/valid_lr.png')
-    tl.vis.save_image(valid_hr_img, save_dir + '/valid_hr.png')
+        print("LR size: %s /  generated HR size: %s" % (size, out.shape))
+        print("[*] save images")
+        tl.vis.save_image(out[0], save_dir + '/valid_gen_8k_'+str(i)+'.png')
+        out_4 = scipy.misc.imresize(out[0], [2160, 3840], mode=None)
+        tl.vis.save_image(out_4, save_dir + '/valid_gen_4k_'+str(i)+'.png')
+        tl.vis.save_image(valid_lr_img, save_dir + '/valid_lr_'+str(i)+'.png')
 
-    out_bicu = scipy.misc.imresize(valid_lr_img, [size[0] * 4, size[1] * 4], interp='bicubic', mode=None)
-    tl.vis.save_image(out_bicu, save_dir + '/valid_bicubic.png')
+        out_bicu = scipy.misc.imresize(valid_lr_img, [size[0] * 2, size[1] * 2], interp='bicubic', mode=None)
+        tl.vis.save_image(out_bicu, save_dir + '/valid_bicubic_'+str(i)+'.png')
 
 
 if __name__ == '__main__':
